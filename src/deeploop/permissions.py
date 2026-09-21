@@ -164,7 +164,11 @@ class PermissionGate:
             "require_approval": sorted(self.require_approval),
         }
 
-    def scrubbed_env(self, base: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    def scrubbed_env(
+        self,
+        base: Optional[Dict[str, str]] = None,
+        pycache_prefix: Optional[Path] = None,
+    ) -> Dict[str, str]:
         import os
 
         env = dict(base if base is not None else os.environ)
@@ -179,4 +183,7 @@ class PermissionGate:
             env["HTTPS_PROXY"] = "http://127.0.0.1:9"
             env["NO_PROXY"] = ""
             env["no_proxy"] = ""
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        if pycache_prefix is not None:
+            env["PYTHONPYCACHEPREFIX"] = str(pycache_prefix)
         return env

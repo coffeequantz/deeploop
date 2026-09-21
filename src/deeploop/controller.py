@@ -99,6 +99,7 @@ class Controller:
             gate=gate,
             max_output_chars=contract.limits.max_output_chars,
             command_timeout_seconds=contract.limits.command_timeout_seconds,
+            pycache_prefix=paths.pycache_dir,
             checkpoints=checkpoints,
             bus=bus,
         )

@@ -7,7 +7,7 @@ import asyncio
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .contract import Criterion, Limits, TaskContract
 from .events import E, EventBus
@@ -107,12 +107,26 @@ class Verifier:
         bus: EventBus,
         workspace: Path,
         limits: Limits,
+        pycache_prefix: Optional[Path] = None,
     ) -> None:
         self.contract = contract
         self.runner = runner
         self.bus = bus
         self.workspace = Path(workspace)
         self.limits = limits
+        self.pycache_prefix = pycache_prefix
+
+    def _command_env(self) -> Dict[str, str]:
+        """Verification commands must not read or write bytecode caches: an agent
+        edit of the same size inside the same second would otherwise be masked by
+        a stale .pyc and the verifier would judge old behaviour."""
+        import os
+
+        env = dict(os.environ)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        if self.pycache_prefix is not None:
+            env["PYTHONPYCACHEPREFIX"] = str(self.pycache_prefix)
+        return env
 
     async def verify(self, iteration: int, evidence: Evidence) -> VerificationReport:
         report = VerificationReport(iteration=iteration)
@@ -136,6 +150,7 @@ class Verifier:
             proc = await asyncio.create_subprocess_shell(
                 criterion.check or "",
                 cwd=str(self.workspace),
+                env=self._command_env(),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )

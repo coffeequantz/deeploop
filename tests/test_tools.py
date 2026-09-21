@@ -1,4 +1,5 @@
 import asyncio
+import sys
 from pathlib import Path
 
 import pytest
@@ -22,11 +23,14 @@ def make_ctx(tmp_path: Path, **overrides) -> ToolContext:
     workspace.mkdir(exist_ok=True)
     gate = PermissionGate(Permissions(workspace="ws"), workspace)
     limits = Limits()
+    pycache_prefix = workspace.parent / ".deeploop" / "pycache"
+    pycache_prefix.mkdir(parents=True, exist_ok=True)
     return ToolContext(
         workspace=workspace,
         gate=gate,
         max_output_chars=overrides.get("max_output_chars", limits.max_output_chars),
         command_timeout_seconds=overrides.get("command_timeout_seconds", 5),
+        pycache_prefix=pycache_prefix,
     )
 
 
@@ -174,3 +178,41 @@ def test_checkpoint_manager_disabled(tmp_path: Path) -> None:
 
     run(scenario())
     assert not (workspace / ".git").exists()
+
+
+def test_stale_bytecode_cannot_mask_a_same_size_fix(tmp_path: Path) -> None:
+    """Regression: a same-size fix written in the same second as the previous
+    run must not be hidden by a stale .pyc. Linux pythons keep caches in the
+    source tree, so the harness must neither read nor write them."""
+    import os
+    import py_compile
+    import struct
+
+    ctx = make_ctx(tmp_path)
+    ws = ctx.workspace
+    buggy = "def add(a, b):\n    return a - b\n"
+    fixed = "def add(a, b):\n    return a + b\n"
+    assert len(buggy) == len(fixed)
+    (ws / "calc.py").write_text(buggy)
+    (ws / "test_calc.py").write_text("from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n")
+
+    cache_dir = ws / "__pycache__"
+    cache_dir.mkdir()
+    pyc = cache_dir / f"calc.{sys.implementation.cache_tag}.pyc"
+    py_compile.compile(str(ws / "calc.py"), cfile=str(pyc), doraise=True)
+    recorded_mtime = struct.unpack("<I", pyc.read_bytes()[8:12])[0]
+
+    (ws / "calc.py").write_text(fixed)
+    os.utime(ws / "calc.py", (recorded_mtime, recorded_mtime))
+
+    result = run(RunCommandTool().run({"command": f"{sys.executable} -m pytest -q"}, ctx))
+    assert result.ok, result.error or result.output
+
+
+def test_command_env_disables_bytecode_caching(tmp_path: Path) -> None:
+    ctx = make_ctx(tmp_path)
+    probe = "import os, sys; print(os.environ.get('PYTHONDONTWRITEBYTECODE'), sys.pycache_prefix)"
+    result = run(RunCommandTool().run({"command": f'{sys.executable} -c "{probe}"'}, ctx))
+    assert result.ok, result.error
+    assert "1" in result.output, result.output
+    assert str(ctx.pycache_prefix) in result.output

@@ -39,6 +39,7 @@ class ToolContext:
     gate: PermissionGate
     max_output_chars: int = 6000
     command_timeout_seconds: int = 300
+    pycache_prefix: Optional[Path] = None
     checkpoints: Optional[Any] = None
     bus: Optional[EventBus] = None
 

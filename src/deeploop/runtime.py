@@ -118,7 +118,14 @@ def build_runtime(
     provider = build_provider(contract.provider, mock_turns=mock_turns)
     runner = ModelRunner(provider, contract, budget, ledger, bus)
     checkpoints = CheckpointManager(paths.workspace, contract.checkpoint, bus)
-    verifier = Verifier(contract, runner, bus, paths.workspace, contract.limits)
+    verifier = Verifier(
+        contract,
+        runner,
+        bus,
+        paths.workspace,
+        contract.limits,
+        pycache_prefix=paths.pycache_dir,
+    )
     critic = Critic(runner, bus)
     from .human import ConsoleHuman
 

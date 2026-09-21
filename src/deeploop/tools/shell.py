@@ -36,7 +36,7 @@ class RunCommandTool(Tool):
             int(args.get("timeout_seconds") or ctx.command_timeout_seconds),
             ctx.command_timeout_seconds,
         )
-        env = ctx.gate.scrubbed_env()
+        env = ctx.gate.scrubbed_env(pycache_prefix=ctx.pycache_prefix)
         try:
             proc = await asyncio.create_subprocess_shell(
                 command,

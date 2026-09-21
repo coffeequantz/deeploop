@@ -327,4 +327,9 @@ class MissionPaths:
 
     def ensure(self) -> MissionPaths:
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        (self.dir / "pycache").mkdir(parents=True, exist_ok=True)
         return self
+
+    @property
+    def pycache_dir(self) -> Path:
+        return self.dir / "pycache"
