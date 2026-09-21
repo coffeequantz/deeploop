@@ -202,6 +202,8 @@ The verification ladder runs cheapest-first, and the actor is never the judge:
 
 If a command criterion fails, the judge is skipped entirely — no point paying for prose review of a broken build.
 
+Verification and tool commands run with `PYTHONDONTWRITEBYTECODE=1` and a `PYTHONPYCACHEPREFIX` inside `.deeploop/`, so they never read or write source-tree bytecode caches. Without that, CPython's `(mtime seconds, size)` cache check lets a fast loop judge stale code: an agent edit of the same size within the same second as the previous run reuses the old `.pyc` and the verifier reports a failure that no longer exists.
+
 ## Termination and failure modes
 
 - **Stuck detection**: consecutive iterations with no file changes, the same error signature repeating, or the critic reporting no progress. On stuck: `replan` (bounded by `max_replans`), `ask`, or `halt`.
