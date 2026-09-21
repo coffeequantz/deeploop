@@ -1,0 +1,159 @@
+Screen {
+    background: $background;
+}
+
+#mission-header {
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+    color: $text;
+}
+
+#body {
+    height: 1fr;
+}
+
+#log {
+    width: 1fr;
+    padding: 0 1;
+    scrollbar-size-vertical: 1;
+}
+
+#sidebar {
+    width: 38;
+    padding: 0 1;
+    border-left: solid $panel-darken-2;
+}
+
+.panel {
+    margin: 0 0 1 0;
+    padding: 0 0;
+    height: auto;
+}
+
+.panel-title {
+    text-style: bold;
+    color: $accent;
+}
+
+#budget-bar {
+    width: 100%;
+}
+
+.block {
+    height: auto;
+    margin: 0 0 1 0;
+    padding: 0 1;
+}
+
+.divider {
+    color: $accent;
+    text-style: bold;
+}
+
+.plan {
+    border-left: thick $accent;
+}
+
+.assistant {
+    border-left: thick $success;
+}
+
+.tool {
+    border-left: thick $warning;
+    color: $text;
+}
+
+.tool.ok {
+    border-left: thick $success;
+}
+
+.tool.failed {
+    border-left: thick $error;
+}
+
+.verify {
+    border-left: thick $accent;
+}
+
+.critic {
+    border-left: thick $panel-lighten-2;
+    color: $text-muted;
+}
+
+.notice.info {
+    color: $text-muted;
+}
+
+.notice.warning {
+    color: $warning;
+}
+
+.notice.error {
+    color: $error;
+}
+
+.notice.success {
+    color: $success;
+    text-style: bold;
+}
+
+#status-bar {
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+    color: $text;
+}
+
+#prompt {
+    height: 3;
+    margin: 0;
+    border: none;
+    background: $surface;
+}
+
+#proposal-title {
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+}
+
+#proposal-body {
+    height: 1fr;
+}
+
+#proposal-main {
+    width: 1fr;
+    padding: 1 2;
+}
+
+#proposal-side {
+    width: 42;
+    padding: 1 1;
+    border-left: solid $panel-darken-2;
+}
+
+.proposal-heading {
+    text-style: bold;
+    color: $accent;
+}
+
+.proposal-warning {
+    color: $warning;
+    margin: 0 0 1 0;
+}
+
+#proposal-footer {
+    height: 1;
+    padding: 0 1;
+    background: $panel;
+}
+
+#proposal-actions {
+    height: auto;
+    padding: 0 1;
+}
+
+#proposal-actions Button {
+    margin: 0 1 0 0;
+}

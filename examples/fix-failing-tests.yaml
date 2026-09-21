@@ -1,0 +1,70 @@
+# DeepLoop demo mission (runs offline with the scripted mock provider):
+#   deeploop run examples/fix-failing-tests.yaml --headless --provider mock
+#
+# With a real provider:
+#   export DEEPSEEK_API_KEY=...
+#   deeploop run examples/fix-failing-tests.yaml
+
+goal: "Make the demo project's test suite pass without weakening the tests."
+
+success_criteria:
+  - id: tests-pass
+    description: "The demo project's pytest suite exits 0."
+    check: "pytest -q"
+  - id: tests-not-weakened
+    description: "The existing tests were not deleted, skipped, or loosened."
+    kind: judge
+
+budget:
+  max_usd: 0.50
+  max_iterations: 6
+  max_wall_clock_minutes: 10
+
+permissions:
+  workspace: "demo-project"
+  network: false
+  allow_all_commands: false
+  allow_commands:
+    - pytest
+    - python3
+    - python
+    - ls
+    - cat
+    - sed
+    - grep
+    - rg
+    - git
+    - mkdir
+    - cp
+    - mv
+    - rm
+    - echo
+    - diff
+    - wc
+    - head
+    - tail
+    - sort
+    - uniq
+    - find
+    - test
+    - touch
+    - "true"
+    - "false"
+
+escalation:
+  on_budget_exhausted: halt
+  on_stuck: ask
+  on_permission_denied: deny
+
+provider:
+  name: deepseek
+
+model:
+  planner: deepseek-reasoner
+  actor: deepseek-chat
+  critic: deepseek-chat
+  judge: deepseek-reasoner
+
+checkpoint:
+  enabled: true
+  branch: deeploop/demo
