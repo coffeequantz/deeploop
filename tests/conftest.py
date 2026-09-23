@@ -145,3 +145,11 @@ def read_ledger(path: Path) -> list:
 
 def ledger_kinds(path: Path) -> list:
     return [entry["kind"] for entry in read_ledger(path)]
+
+
+@pytest.fixture(autouse=True)
+def isolated_global_config(tmp_path_factory, monkeypatch):
+    """Never read or write the developer's real ~/.config/deeploop/config.yaml."""
+    path = tmp_path_factory.mktemp("deeploop-config") / "config.yaml"
+    monkeypatch.setenv("DEEPLOOP_CONFIG", str(path))
+    return path

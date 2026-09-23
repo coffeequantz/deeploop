@@ -107,3 +107,88 @@ def test_proposal_screen_revises_with_a_note(tmp_path) -> None:
         return app.return_value
 
     assert asyncio.run(scenario()) == ("revise", "split the criteria into two")
+
+
+def test_interview_screen_collects_answers() -> None:
+    from textual.widgets import Input
+
+    from deeploop.interview import Question
+    from deeploop.tui.interview import InterviewApp
+
+    questions = [
+        Question(
+            id="v",
+            question="Verify how?",
+            choices=["pytest -q"],
+            default="pytest -q",
+            affects="criteria",
+        ),
+        Question(id="d", question="Deps?", choices=["no", "yes"], default="no", affects="permissions"),
+    ]
+    app = InterviewApp(questions)
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app.query_one("#q-0", Input).value = "1"
+            app.query_one("#q-1", Input).value = "yes"
+            await pilot.press("enter")
+            await pilot.press("enter")
+        return app.return_value
+
+    assert asyncio.run(scenario()) == ["1", "yes"]
+
+
+def test_interview_screen_can_skip_all() -> None:
+    from deeploop.interview import Question
+    from deeploop.tui.interview import InterviewApp
+
+    app = InterviewApp([Question(id="v", question="Verify how?")])
+
+    async def scenario():
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            await pilot.press("escape")
+        return app.return_value
+
+    assert asyncio.run(scenario()) == []
+
+
+def test_setup_screen_saves_provider(tmp_path) -> None:
+    from deeploop.config import load_config
+    from deeploop.tui.setup import SetupApp
+
+    config_path = tmp_path / "config.yaml"
+    app = SetupApp(default_provider="deepseek", path=config_path)
+
+    async def scenario():
+        async with app.run_test(size=(120, 45)) as pilot:
+            await pilot.pause()
+            await pilot.click("#p-mock")
+            await pilot.click("#save")
+        return app.return_value
+
+    result = asyncio.run(scenario())
+    assert result is not None
+    assert result["provider"] == "mock"
+    assert load_config(config_path).provider == "mock"
+    assert load_config(config_path).onboarded is True
+
+
+def test_setup_screen_requires_a_key(tmp_path) -> None:
+    from textual.widgets import Static
+
+    from deeploop.tui.setup import SetupApp
+
+    config_path = tmp_path / "config.yaml"
+    app = SetupApp(default_provider="deepseek", path=config_path)
+
+    async def scenario():
+        async with app.run_test(size=(120, 45)) as pilot:
+            await pilot.pause()
+            await pilot.click("#save")
+            return str(app.query_one("#setup-status", Static).content)
+
+    status = asyncio.run(scenario())
+    assert "API key" in status
+    assert not config_path.exists()

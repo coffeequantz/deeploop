@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 from rich.console import Console
@@ -18,11 +18,23 @@ from rich.panel import Panel
 from rich.table import Table
 
 from . import __version__
+from . import config as global_config
+from . import setup as provider_setup
 from .brief import load_brief
 from .budget import BudgetTracker
+from .catalog import get_option, provider_names
 from .contract import TaskContract
 from .controller import MissionStatus
 from .events import EventBus
+from .interview import (
+    Answer,
+    collect_answers,
+    propose_questions,
+    render_clarifications,
+    resolve_answer,
+    save_clarifications,
+    skipped_summary,
+)
 from .ledger import Ledger
 from .llm import ModelRunner
 from .proposal import contract_from_yaml, contract_to_yaml, propose_contract
@@ -33,6 +45,34 @@ from .runtime import build_runtime, resolve_brief_target, resolve_contract_path
 from .tui import TUIHuman, run_tui
 
 CONSOLE = Console()
+
+STARTER_BRIEF = """# Brief: <name this project>
+
+Describe the finished outcome in plain language. deeploop turns this into a
+contract with machine-checkable criteria and loops until they pass.
+
+## Goal
+
+One or two sentences describing what should exist when this is done.
+
+## What done looks like
+
+- A command that proves it, e.g. `pytest -q` exits 0
+- Any other observable, checkable outcome
+
+## Constraints
+
+- What must not change
+- Whether new dependencies are allowed
+
+## Context
+
+- Files, docs, or links the agent should read (drop them in context/ or assets/)
+
+## Non-goals
+
+- What this work explicitly is not
+"""
 
 TEMPLATE = """# DeepLoop mission contract
 goal: "Describe the finished outcome in one sentence."
@@ -86,7 +126,9 @@ def _base_contract(provider_name: Optional[str] = None) -> TaskContract:
     data = yaml.safe_load(TEMPLATE)
     if provider_name:
         data["provider"]["name"] = provider_name
-    return TaskContract.model_validate(data)
+    contract = TaskContract.model_validate(data)
+    provider_setup.apply_to_contract(contract, provider_override=provider_name)
+    return contract
 
 
 def _print_contract(contract: TaskContract, contract_path: Path) -> None:
@@ -229,6 +271,47 @@ def _edit_in_editor(contract: TaskContract) -> Optional[TaskContract]:
         path.unlink(missing_ok=True)
 
 
+def _collect_answers(
+    questions, use_tui: bool, budget: BudgetTracker
+) -> Optional[List[Answer]]:
+    """Returns answers (possibly all skipped), or None if the human cancelled."""
+    if use_tui:
+        from .tui.interview import InterviewApp
+
+        result = InterviewApp(questions, cost_usd=budget.spent_usd).run()
+        if result is None:
+            return None
+        return [
+            Answer(question=question, answer=resolve_answer(value, question))
+            for question, value in zip(questions, result)
+        ]
+    if not sys.stdin.isatty():
+        CONSOLE.print(
+            "[yellow]not an interactive terminal: clarifying questions skipped "
+            "(run without --headless to answer them)[/]"
+        )
+        return []
+    CONSOLE.print()
+    CONSOLE.print(
+        Panel(
+            "\n".join(f"[{q.affects}] {q.question}" for q in questions),
+            title="clarifying questions (blank = skip, default assumed)",
+            border_style="cyan",
+        )
+    )
+
+    def ask(label: str) -> str:
+        try:
+            return input(f"{label}\n> ")
+        except EOFError:
+            return ""
+
+    try:
+        return collect_answers(questions, ask)
+    except KeyboardInterrupt:
+        return None
+
+
 def _derive_contract(
     contract_dir: Path,
     brief_dir: Path,
@@ -236,6 +319,7 @@ def _derive_contract(
     provider_name: Optional[str],
     auto_yes: bool,
     use_tui: bool,
+    ask_questions: bool = True,
 ) -> Optional[Path]:
     base = _base_contract(provider_name)
     exclude = [brief_dir / ".deeploop"]
@@ -247,14 +331,45 @@ def _derive_contract(
     brief_rel = os.path.relpath(brief_dir, contract_dir)
     revision = ""
     contract: Optional[TaskContract] = None
+    answers: List[Answer] = []
+    clarifications = ""
     try:
+        if ask_questions and not auto_yes:
+            try:
+                questions = asyncio.run(propose_questions(runner, bundle, base))
+            except Exception as exc:  # noqa: BLE001 - the interview is optional
+                CONSOLE.print(f"[yellow]interview skipped: {type(exc).__name__}: {exc}[/]")
+                questions = []
+            if questions:
+                CONSOLE.print(f"[dim]{len(questions)} clarifying question(s)[/]")
+                answers = _collect_answers(questions, use_tui, budget)
+                if answers is None:
+                    CONSOLE.print("[yellow]interview cancelled; nothing was written[/]")
+                    return None
+                clarifications = render_clarifications(answers)
+                save_clarifications(
+                    contract_dir / ".deeploop" / "artifacts" / "clarifications.json",
+                    answers,
+                    base.model.planner,
+                )
+                ledger.append(
+                    "clarifications",
+                    answered=sum(1 for item in answers if not item.skipped),
+                    skipped=sum(1 for item in answers if item.skipped),
+                    questions=[item.question.id for item in answers],
+                )
         while True:
             CONSOLE.print(f"[dim]deriving a contract from {brief_dir} …[/]")
             try:
-                draft = asyncio.run(propose_contract(runner, bundle, base, revision))
+                draft = asyncio.run(
+                    propose_contract(runner, bundle, base, revision, clarifications)
+                )
             except Exception as exc:  # noqa: BLE001 - report and stop
                 CONSOLE.print(f"[red]could not derive a contract: {type(exc).__name__}: {exc}[/]")
                 return None
+            unanswered = skipped_summary(answers)
+            if unanswered and unanswered not in draft.warnings:
+                draft.warnings.append(unanswered)
             contract = draft.to_contract(base, brief_rel)
             if auto_yes:
                 break
@@ -316,8 +431,180 @@ def _derive_only(args: argparse.Namespace) -> int:
         provider_name=args.provider,
         auto_yes=args.yes,
         use_tui=use_tui,
+        ask_questions=not args.no_questions,
     )
     return 0 if contract_path else 1
+
+
+def _prompt(text: str) -> Optional[str]:
+    try:
+        return input(f"{text}\n> ")
+    except (EOFError, KeyboardInterrupt):
+        return None
+
+
+def _confirm(text: str) -> bool:
+    answer = _prompt(f"{text} [Y/n]")
+    if answer is None:
+        return False
+    return answer.strip().lower() in ("", "y", "yes")
+
+
+def _interactive_setup(use_tui: bool) -> Optional[Dict[str, Any]]:
+    if use_tui:
+        from .tui.setup import run_setup
+
+        return run_setup()
+    if not sys.stdin.isatty():
+        return None
+    import getpass
+
+    def secret(text: str) -> Optional[str]:
+        try:
+            return getpass.getpass(f"{text}: ")
+        except (EOFError, KeyboardInterrupt):
+            return None
+
+    result = provider_setup.console_setup(
+        _prompt, secret, default_provider=global_config.load_config().provider
+    )
+    if result is None:
+        return None
+    if result.get("error"):
+        CONSOLE.print(f"[red]{result['error']}[/]")
+        return None
+    if "test_message" in result:
+        level = "green" if result.get("test_ok") else "red"
+        CONSOLE.print(f"[{level}]{result['test_message']}[/]")
+    if result.get("saved_to"):
+        CONSOLE.print(f"[green]saved[/] {result['saved_to']}")
+    return result
+
+
+def _ensure_provider(use_tui: bool, provider: Optional[str] = None) -> bool:
+    target = provider or global_config.load_config().provider
+    if global_config.is_configured(target):
+        return True
+    option = get_option(target)
+    CONSOLE.print(f"[yellow]no API key configured for {target}[/]")
+    if option is not None and option.key_url:
+        CONSOLE.print(f"[dim]get one at {option.key_url}[/]")
+    _interactive_setup(use_tui)
+    return global_config.is_configured(global_config.load_config().provider)
+
+
+def _setup_command(args: argparse.Namespace) -> int:
+    if args.show:
+        CONSOLE.print(global_config.describe())
+        return 0
+    if args.provider:
+        key = args.key or global_config.resolve_api_key(args.provider) or ""
+        base_url = args.base_url or ""
+        errors = provider_setup.validate_inputs(args.provider, key, base_url)
+        if errors:
+            CONSOLE.print(f"[red]{'; '.join(errors)}[/]")
+            return 1
+        if not args.no_test:
+            ok, message = asyncio.run(
+                provider_setup.test_connection(args.provider, key, base_url)
+            )
+            CONSOLE.print(("[green]✓ [/]" if ok else "[red]✗ [/]") + message)
+            if not ok:
+                return 1
+        saved = provider_setup.apply_setup(args.provider, key, base_url)
+        CONSOLE.print(f"[green]saved[/] {saved}")
+        return 0
+    use_tui = not args.headless and sys.stdout.isatty() and sys.stdin.isatty()
+    result = _interactive_setup(use_tui)
+    if not result:
+        CONSOLE.print("[yellow]setup cancelled; nothing was saved[/]")
+        return 1
+    return 0
+
+
+def _brief_candidates(root: Path) -> List[Path]:
+    candidates: List[Path] = []
+    if resolve_contract_path(root) or resolve_brief_target(root):
+        candidates.append(root.resolve())
+    try:
+        children = sorted(child for child in root.iterdir() if child.is_dir())
+    except OSError:
+        return candidates
+    for child in children:
+        if child.name.startswith(".") or child.name in ("node_modules", ".venv"):
+            continue
+        if resolve_contract_path(child) or resolve_brief_target(child):
+            candidates.append(child.resolve())
+        if len(candidates) >= 8:
+            break
+    return candidates
+
+
+def _write_starter_brief(folder: Path) -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    brief = folder / "BRIEF.md"
+    if not brief.exists():
+        brief.write_text(STARTER_BRIEF, encoding="utf-8")
+    return brief
+
+
+def _choose_brief_folder() -> Optional[Path]:
+    cwd = Path.cwd()
+    candidates = _brief_candidates(cwd)
+    if candidates:
+        CONSOLE.print("found:")
+        for index, path in enumerate(candidates, start=1):
+            CONSOLE.print(f"  {index}. {path}")
+    default = str(candidates[0]) if candidates else str(cwd / "brief")
+    for _ in range(3):
+        raw = _prompt(
+            "Which folder should I work from? (one with BRIEF.md or mission.yaml)"
+            f"\n[{default}]"
+        )
+        if raw is None:
+            return None
+        answer = raw.strip() or default
+        if answer.isdigit() and candidates and 1 <= int(answer) <= len(candidates):
+            return candidates[int(answer) - 1]
+        path = Path(answer).expanduser()
+        if path.is_dir():
+            if resolve_contract_path(path) or resolve_brief_target(path):
+                return path
+            CONSOLE.print(f"[yellow]{path} has no mission.yaml or BRIEF.md[/]")
+            continue
+        if _confirm(f"{path} does not exist. Create a starter brief there?"):
+            brief = _write_starter_brief(path)
+            CONSOLE.print(f"[green]wrote[/] {brief}")
+            return path
+    return None
+
+
+def _interactive_start() -> int:
+    """Bare `deeploop`: configure a provider if needed, pick a folder, run it."""
+    if not (sys.stdout.isatty() and sys.stdin.isatty()):
+        build_parser().print_help()
+        return 0
+    CONSOLE.print("[bold magenta]deeploop[/]  first run")
+    if not _ensure_provider(use_tui=True):
+        CONSOLE.print("[red]no provider configured; run `deeploop setup`[/]")
+        return 1
+    folder = _choose_brief_folder()
+    if folder is None:
+        CONSOLE.print(
+            "[yellow]nothing to run.[/] Write a BRIEF.md, then: deeploop run <folder>"
+        )
+        return 0
+    return _run(
+        argparse.Namespace(
+            command="run",
+            contract=str(folder),
+            headless=False,
+            provider=None,
+            verbose=False,
+            yes=False,
+            no_questions=False,
+        )
+    )
 
 
 def _run(args: argparse.Namespace) -> int:
@@ -339,15 +626,34 @@ def _run(args: argparse.Namespace) -> int:
             provider_name=args.provider,
             auto_yes=args.yes,
             use_tui=use_tui,
+            ask_questions=not args.no_questions,
         )
         if contract_path is None:
             return 1
+    try:
+        contract = TaskContract.load(contract_path)
+    except Exception as exc:  # noqa: BLE001 - config errors should be readable
+        CONSOLE.print(f"[red]invalid contract: {type(exc).__name__}: {exc}[/]")
+        return 1
+    provider_name, provider_note = provider_setup.resolve_provider(contract, args.provider)
+    if provider_note:
+        CONSOLE.print(f"[yellow]{provider_note}[/]")
+    if not global_config.is_configured(provider_name):
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            _ensure_provider(use_tui, provider_name)
+            provider_name, provider_note = provider_setup.resolve_provider(contract, args.provider)
+    if not global_config.is_configured(provider_name):
+        CONSOLE.print(
+            f"[red]no API key for provider {provider_name!r}: run `deeploop setup`[/]"
+        )
+        return 1
+
     human = TUIHuman() if use_tui else None
     try:
         runtime = build_runtime(
             contract_path,
             resume=args.command == "resume",
-            provider_name=args.provider,
+            provider_name=provider_name,
             human=human,
         )
     except Exception as exc:  # noqa: BLE001 - config errors should be readable
@@ -393,6 +699,7 @@ def build_parser() -> argparse.ArgumentParser:
     brief.add_argument("--provider", default=None, help="override provider (deepseek|openrouter|ollama|mock)")
     brief.add_argument("--yes", action="store_true", help="accept the derived contract without review")
     brief.add_argument("--headless", action="store_true", help="review in the console instead of the TUI")
+    brief.add_argument("--no-questions", action="store_true", help="skip the clarifying interview")
 
     for name, help_text in (("run", "run a mission"), ("resume", "resume a mission from its ledger")):
         run = sub.add_parser(name, help=help_text)
@@ -408,6 +715,17 @@ def build_parser() -> argparse.ArgumentParser:
         run.add_argument(
             "--yes", action="store_true", help="accept a derived contract without review"
         )
+        run.add_argument(
+            "--no-questions", action="store_true", help="skip the clarifying interview"
+        )
+
+    setup = sub.add_parser("setup", help="configure a provider and store its API key")
+    setup.add_argument("--provider", choices=provider_names(), default=None)
+    setup.add_argument("--key", default=None, help="API key (otherwise prompted)")
+    setup.add_argument("--base-url", default=None, help="override the provider base URL")
+    setup.add_argument("--show", action="store_true", help="print the current configuration")
+    setup.add_argument("--no-test", action="store_true", help="skip the connection test")
+    setup.add_argument("--headless", action="store_true", help="prompt in the console, not the TUI")
 
     report = sub.add_parser("report", help="summarize a mission ledger")
     report.add_argument("directory", nargs="?", default=".", help="mission directory containing .deeploop/")
@@ -417,8 +735,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    raw = list(sys.argv[1:] if argv is None else argv)
+    if not raw:
+        return _interactive_start()
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw)
     if args.command == "init":
         target = Path(args.directory)
         target.mkdir(parents=True, exist_ok=True)
@@ -437,6 +758,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 1
         _print_contract(contract, Path(args.contract))
         return 0
+    if args.command == "setup":
+        return _setup_command(args)
     if args.command == "brief":
         return _derive_only(args)
     if args.command in ("run", "resume"):

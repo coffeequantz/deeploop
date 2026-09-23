@@ -78,6 +78,7 @@ class Evidence:
     recent_outputs: List[Tuple[str, str]] = field(default_factory=list)
     final_text: str = ""
     criteria_status: List[str] = field(default_factory=list)
+    clarifications: str = ""
 
     def render(self, max_chars: int = 8000) -> str:
         parts = [f"ITERATION {self.iteration}"]
@@ -96,6 +97,8 @@ class Evidence:
             parts.append("EXECUTOR FINAL MESSAGE:\n" + truncate_middle(self.final_text, 1500))
         if self.criteria_status:
             parts.append("CRITERIA STATUS BEFORE THIS VERIFICATION:\n" + "\n".join(self.criteria_status))
+        if self.clarifications:
+            parts.append(truncate_middle(self.clarifications, 2000))
         return "\n\n".join(parts)
 
 

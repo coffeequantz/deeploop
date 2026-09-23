@@ -4,44 +4,36 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import time
 from typing import Any, Dict, List, Optional
 
 import httpx
 
+from ..catalog import DEFAULT_BASE_URLS, DEFAULT_KEY_ENVS
+from ..config import resolve_api_key
 from ..contract import ProviderConfig
 from .base import ChatMessage, Completion, Provider, ProviderError, ToolCall, Usage
 from .pricing import estimate_cost
-
-DEFAULT_BASE_URLS = {
-    "deepseek": "https://api.deepseek.com/v1",
-    "openrouter": "https://openrouter.ai/api/v1",
-    "ollama": "http://localhost:11434/v1",
-}
-
-DEFAULT_KEY_ENVS = {
-    "deepseek": "DEEPSEEK_API_KEY",
-    "openrouter": "OPENROUTER_API_KEY",
-    "ollama": None,
-}
 
 RETRY_STATUS = {408, 409, 429, 500, 502, 503, 504}
 
 
 class OpenAICompatProvider(Provider):
-    def __init__(self, config: ProviderConfig, name: Optional[str] = None) -> None:
+    def __init__(
+        self, config: ProviderConfig, name: Optional[str] = None, api_key: Optional[str] = None
+    ) -> None:
         self.config = config
         self.name = name or config.name
         self.base_url = (config.base_url or DEFAULT_BASE_URLS.get(self.name, "")).rstrip("/")
         if not self.base_url:
             raise ProviderError(f"no base_url configured for provider {self.name!r}")
         key_env = config.api_key_env or DEFAULT_KEY_ENVS.get(self.name)
-        self.api_key = os.environ.get(key_env, "") if key_env else ""
+        resolved = api_key if api_key is not None else resolve_api_key(self.name, config.api_key_env)
+        self.api_key = resolved or ""
         if key_env and not self.api_key:
             raise ProviderError(
-                f"missing API key: set {key_env} in the environment "
-                f"(or point provider.api_key_env at another variable)"
+                f"missing API key for {self.name}: run `deeploop setup`, "
+                f"or export {key_env}"
             )
         headers = {"Content-Type": "application/json"}
         if self.api_key:

@@ -47,6 +47,30 @@ def demo_turns() -> List[MockTurn]:
     ]
 
 
+def demo_questions() -> Dict[str, Any]:
+    """Scripted clarifying questions, used when the mock provider interviews."""
+    return {
+        "questions": [
+            {
+                "id": "verify-command",
+                "question": "Which command should prove the work is done?",
+                "choices": ["pytest -q"],
+                "default": "pytest -q",
+                "affects": "criteria",
+                "why": "it becomes the machine-checkable success criterion",
+            },
+            {
+                "id": "edit-in-place",
+                "question": "Should the fix be applied in place, or in a new directory?",
+                "choices": ["in place", "new directory"],
+                "default": "in place",
+                "affects": "workspace",
+                "why": "it sets permissions.workspace",
+            },
+        ]
+    }
+
+
 def demo_proposal() -> Dict[str, Any]:
     """Scripted contract proposal, used when the mock provider is asked to derive
     a mission from a brief (keyless demos and tests)."""
@@ -75,6 +99,7 @@ class MockProvider(Provider):
         judge_pass: bool = True,
         critic_progress: bool = True,
         planner_text: str = "1. Run the tests.\n2. Fix the failing code.\n3. Re-run the tests.",
+        interviewer_text: Optional[str] = None,
         judge_reason: str = "mock judge: evidence satisfies the criterion",
         critic_reason: str = "mock critic: iteration produced observable change",
     ) -> None:
@@ -82,6 +107,9 @@ class MockProvider(Provider):
         self.judge_pass = judge_pass
         self.critic_progress = critic_progress
         self.planner_text = planner_text
+        self.interviewer_text = (
+            interviewer_text if interviewer_text is not None else json.dumps(demo_questions())
+        )
         self.judge_reason = judge_reason
         self.critic_reason = critic_reason
         self.index = 0
@@ -100,7 +128,9 @@ class MockProvider(Provider):
         self.calls.append(
             {"role": role, "model": model, "message_count": len(messages), "messages": list(messages)}
         )
-        if role == "planner":
+        if role == "interviewer":
+            message = ChatMessage.assistant(self.interviewer_text)
+        elif role == "planner":
             message = ChatMessage.assistant(self.planner_text)
         elif role == "critic":
             message = ChatMessage.assistant(

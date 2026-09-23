@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import sys
@@ -133,3 +134,58 @@ def test_run_requires_contract_or_brief(tmp_path: Path) -> None:
     empty.mkdir()
     assert main(["run", str(empty)]) == 1
     assert main(["brief", str(empty)]) == 1
+
+
+def test_setup_show_and_non_interactive(tmp_path: Path, monkeypatch) -> None:
+    config = tmp_path / "config.yaml"
+    monkeypatch.setenv("DEEPLOOP_CONFIG", str(config))
+    assert main(["setup", "--show"]) == 0
+    assert main(["setup", "--provider", "mock", "--no-test"]) == 0
+    assert "provider: mock" in config.read_text()
+    assert main(["setup", "--provider", "deepseek", "--no-test"]) == 1
+    assert main(["setup", "--provider", "deepseek", "--key", "sk-test", "--no-test"]) == 0
+    assert "sk-test" in config.read_text()
+
+
+def test_bare_deeploop_without_a_tty_prints_help(capsys) -> None:
+    assert main([]) == 0
+    assert "usage: deeploop" in capsys.readouterr().out
+
+
+def test_brief_interview_records_answers(tmp_path: Path, monkeypatch) -> None:
+    from deeploop import cli as cli_module
+    from deeploop.interview import Answer
+
+    project = _copy_brief_demo(tmp_path)
+    _patch_path(monkeypatch)
+    seen = {}
+
+    def fake_collect(questions, use_tui, budget):
+        seen["ids"] = [question.id for question in questions]
+        return [
+            Answer(question=questions[0], answer="pytest -q"),
+            Answer(question=questions[1], answer=""),
+        ]
+
+    monkeypatch.setattr(cli_module, "_collect_answers", fake_collect)
+    monkeypatch.setattr(cli_module, "_review_console", lambda draft, budget: ("accept", None))
+
+    assert main(["brief", str(project), "--provider", "mock"]) == 0
+    assert seen["ids"] == ["verify-command", "edit-in-place"]
+
+    clarifications = json.loads(
+        (project / ".deeploop" / "artifacts" / "clarifications.json").read_text()
+    )
+    assert clarifications["answers"][0]["answer"] == "pytest -q"
+    assert clarifications["answers"][1]["skipped"] is True
+
+    ledger = (project / ".deeploop" / "ledger.jsonl").read_text()
+    assert '"kind": "clarifications"' in ledger
+    assert '"kind": "interviewer"' not in ledger  # role is recorded inside llm_call
+
+
+def test_brief_yes_skips_interview(tmp_path: Path, monkeypatch) -> None:
+    project = _copy_brief_demo(tmp_path)
+    _patch_path(monkeypatch)
+    assert main(["brief", str(project), "--yes", "--provider", "mock"]) == 0
+    assert not (project / ".deeploop" / "artifacts" / "clarifications.json").exists()

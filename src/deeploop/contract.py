@@ -174,6 +174,7 @@ class ModelConfig(BaseModel):
     def for_role(self, role: str) -> str:
         return {
             "planner": self.planner,
+            "interviewer": self.planner,
             "actor": self.actor,
             "critic": self.critic,
             "judge": self.judge,

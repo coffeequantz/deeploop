@@ -32,12 +32,15 @@ task contract (YAML)
 curl -fsSL https://raw.githubusercontent.com/coffeequantz/deeploop/main/install.sh | sh
 ```
 
-The installer is a short, readable shell script: it prefers `uv`, then `pipx`, and otherwise creates a private venv under `~/.local/share/deeploop` with a symlink in `~/.local/bin`. Then:
+The installer is a short, readable shell script: it prefers `uv`, then `pipx`, and otherwise creates a private venv under `~/.local/share/deeploop` with a symlink in `~/.local/bin`.
+
+Then just run it — no environment variables required:
 
 ```bash
-export DEEPSEEK_API_KEY=sk-...
-deeploop --version
+deeploop
 ```
+
+That starts the first-run flow: pick a provider, paste an API key (stored in `~/.config/deeploop/config.yaml`, mode 0600, or set `DEEPSEEK_API_KEY`/`OPENROUTER_API_KEY` instead — environment variables always win), optionally verify the key with a fractional-cent test call, then choose the brief folder to work from. Change it later with `deeploop setup` (`--show` prints the current config, `--provider X --key Y --no-test` is scriptable).
 
 Other ways in:
 
@@ -64,6 +67,7 @@ Maintainers: publishing runs through `.github/workflows/publish.yml` on GitHub r
 ## Quickstart
 
 ```bash
+deeploop                     # first run: provider setup, then pick a brief folder
 deeploop brief brief/        # derive a mission contract from a brief folder, review it
 deeploop run brief/          # run the loop until the verifier says done
 deeploop report brief/       # status, criteria, spend per iteration
@@ -87,7 +91,11 @@ deeploop brief brief/          # derive mission.yaml from the folder, review it,
 deeploop run brief/            # same, then run the mission
 ```
 
-`deeploop run <folder>` accepts a folder directly: if it contains a `mission.yaml` it runs it, and if it only has a `BRIEF.md` it derives the contract first. Derivation is interactive — you see the proposed goal, criteria, workspace and budget and can:
+`deeploop run <folder>` accepts a folder directly: if it contains a `mission.yaml` it runs it, and if it only has a `BRIEF.md` it derives the contract first.
+
+**Before the proposal, deeploop interviews you.** One planner call turns the brief into up to five questions, each of which must name the contract field it changes (`criteria`, `workspace`, `permissions`, `budget`, `scope`) — so the interview asks about the things that actually decide whether a mission can succeed: the exact command that proves completion, whether dependencies may be added, whether to edit in place, what may be spent. Questions the brief already answers are forbidden, every question has a default, answers can be typed freely or picked by number, and skipping is one keypress. Answers are stored in `.deeploop/artifacts/clarifications.json`, recorded in the ledger, treated as binding by the proposal, and shown to the planner, the executor and the judge. Skipped questions are surfaced as warnings on the contract you approve. `--yes` and `--no-questions` skip the interview; a non-interactive terminal skips it with a note rather than blocking.
+
+Derivation itself is interactive — you see the proposed goal, criteria, workspace and budget and can:
 
 - **accept** it (writes `mission.yaml`, then the loop starts),
 - **revise** it by typing a note ("split the tests criterion in two", "budget is too small"), which regenerates the proposal,
@@ -180,6 +188,8 @@ Warnings are worth reading: prose-only criteria, `allow_all_commands`, network a
 
 | command | what it does |
 | --- | --- |
+| `deeploop` | first run: provider setup, then pick a brief folder |
+| `deeploop setup [--show]` | configure provider, API key and base URL (`--provider X --key Y --no-test` for scripts) |
 | `deeploop init [dir]` | write a starter `mission.yaml` |
 | `deeploop brief [dir]` | derive a contract from a brief folder, review it, write `mission.yaml` |
 | `deeploop validate <contract>` | parse and sanity-check a contract |
@@ -190,7 +200,7 @@ Warnings are worth reading: prose-only criteria, `allow_all_commands`, network a
 
 Exit codes: `0` done, `2` halted/budget-exhausted, `1` error — usable directly in CI.
 
-Useful flags: `--provider mock|deepseek|openrouter|ollama`, `--headless`, `--verbose`, `--yes`.
+Useful flags: `--provider mock|deepseek|openrouter|ollama`, `--headless`, `--verbose`, `--yes`, `--no-questions`.
 
 ## How completion is decided
 
@@ -222,13 +232,17 @@ src/deeploop/
   controller.py    the loop: plan → act → observe → verify → decide
   verifier.py      verification ladder (command checks, judge) + progress critic
   brief.py         brief folder loading, context manifest, image metadata
+  interview.py     clarifying questions ('grill me') before a brief becomes a contract
+  setup.py         provider setup logic: validation, connection test, console wizard
+  config.py        global config: provider choice, stored keys, base URLs
+  catalog.py       provider metadata: base URLs, key envs, suggested models
   proposal.py      prose → verifiable contract draft, YAML render/validate
   vision.py        optional one-time image descriptions, cached by hash
   prompts.py       role prompts, kept separate from control flow
   llm.py           single choke point for model calls (budget + ledger)
   tools/           shell, files, git; permission-gated
   providers/       OpenAI-compatible client (DeepSeek/OpenRouter/Ollama) + mock
-  tui/             Textual UI: mission view, proposal review, Kilo-inspired layout
+  tui/             Textual UI: mission view, proposal review, interview, setup wizard
   cli.py           command line entry point
 ```
 
@@ -239,7 +253,7 @@ pip install -e ".[dev]"
 pytest
 ```
 
-The suite covers contract validation, hard budget enforcement, permission bypass attempts, tool behavior, the verification ladder, stuck detection, escalation, resume, brief loading, contract derivation, the CLI, and headless TUI pilot runs (mission view and proposal review).
+The suite covers contract validation, hard budget enforcement, permission bypass attempts, tool behavior, the verification ladder, stuck detection, escalation, resume, brief loading, contract derivation, the clarifying interview, global config and provider setup, the CLI, and headless TUI pilot runs (mission view, proposal review, interview, setup wizard).
 
 ## Roadmap
 

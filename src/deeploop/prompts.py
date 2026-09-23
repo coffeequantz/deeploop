@@ -76,6 +76,7 @@ def planner_messages(
     history: List[str],
     human_notes: List[str],
     brief_context: str = "",
+    clarifications: str = "",
 ) -> List[ChatMessage]:
     parts = [
         f"MISSION GOAL:\n{contract.goal}",
@@ -85,6 +86,8 @@ def planner_messages(
     ]
     if brief_context:
         parts.append(f"BRIEF CONTEXT:\n{truncate_middle(brief_context, 6000)}")
+    if clarifications:
+        parts.append(f"{truncate_middle(clarifications, 4000)}\nTreat these as binding.")
     if previous_plan:
         parts.append(f"PREVIOUS PLAN:\n{previous_plan}")
     if criteria_status:
@@ -110,6 +113,7 @@ def actor_messages(
     human_notes: List[str],
     tool_names: List[str],
     brief_context: str = "",
+    clarifications: str = "",
 ) -> List[ChatMessage]:
     perms = gate.summary()
     allow = ", ".join(perms["allow_commands"][:60])
@@ -125,6 +129,8 @@ def actor_messages(
     ]
     if brief_context:
         parts.append(f"BRIEF CONTEXT:\n{truncate_middle(brief_context, 6000)}")
+    if clarifications:
+        parts.append(f"{truncate_middle(clarifications, 4000)}\nTreat these as binding.")
     if criteria_status:
         parts.append("LAST VERIFIER RESULT:\n" + "\n".join(criteria_status))
     if verifier_feedback:

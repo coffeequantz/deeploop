@@ -13,6 +13,7 @@ from .budget import BudgetExceeded, BudgetTracker
 from .contract import MissionPaths, TaskContract
 from .events import E, EventBus
 from .human import HumanInterface
+from .interview import load_clarifications_text
 from .ledger import Ledger, MissionState
 from .llm import ModelRunner
 from .permissions import PermissionGate
@@ -106,6 +107,7 @@ class Controller:
         self._stop_requested = False
         self._human_notes: List[str] = []
         self.brief: Optional[BriefBundle] = None
+        self.clarifications_text: str = ""
         self._force_replan = False
         self._last_report: Optional[VerificationReport] = None
         self._consecutive_provider_errors = 0
@@ -154,6 +156,7 @@ class Controller:
                     self.state.last_green_sha = sha
                     self.ledger.append("checkpoint", sha=sha, message="mission start", green=True)
             await self._load_brief()
+            await self._load_clarifications()
             result = await self._loop()
             return result
         except Exception as exc:  # noqa: BLE001 - surface as mission error
@@ -339,10 +342,23 @@ class Controller:
                 message=f"{len(images)} brief image(s) ignored (brief.describe_images=false)",
             )
 
+    async def _load_clarifications(self) -> None:
+        text = load_clarifications_text(self.paths.artifacts_dir / "clarifications.json")
+        if not text:
+            return
+        self.clarifications_text = text
+        self.ledger.append("clarifications_loaded", chars=len(text))
+        await self.bus.emit(
+            E.LOG, level="info", message="brief interview answers loaded and treated as binding"
+        )
+
     def _brief_context(self) -> str:
-        if self.brief is None:
-            return ""
-        return self.brief.manifest(max_chars=self.contract.brief.max_context_chars)
+        parts: List[str] = []
+        if self.brief is not None:
+            parts.append(self.brief.manifest(max_chars=self.contract.brief.max_context_chars))
+        if self.clarifications_text:
+            parts.append(self.clarifications_text)
+        return "\n\n".join(parts)
 
     def _should_plan(self) -> bool:
         if self._force_replan:
@@ -362,6 +378,7 @@ class Controller:
             history=self.state.history,
             human_notes=self._human_notes[-5:],
             brief_context=self._brief_context(),
+            clarifications=self.clarifications_text,
         )
         completion = await self.runner.call("planner", messages)
         self.state.plan = completion.message.content.strip()
@@ -380,6 +397,7 @@ class Controller:
             human_notes=self._human_notes[-5:],
             tool_names=self.registry.names(),
             brief_context=self._brief_context(),
+            clarifications=self.clarifications_text,
         )
         limit = self.contract.limits.max_tool_calls_per_iteration
         while outcome.tool_calls < limit and not self._stop_requested:
@@ -476,6 +494,7 @@ class Controller:
             criteria_status=(
                 render_criteria_status(self._last_report.results) if self._last_report else []
             ),
+            clarifications=self.clarifications_text,
         )
 
     # ------------------------------------------------------------------ verdicts

@@ -107,9 +107,10 @@ async def propose_contract(
     bundle: BriefBundle,
     base: TaskContract,
     revision: str = "",
+    clarifications: str = "",
     max_criteria: int = 5,
 ) -> ContractDraft:
-    messages = proposal_messages(bundle, revision)
+    messages = proposal_messages(bundle, revision, clarifications)
     completion = await runner.call("planner", messages)
     parsed = parse_json_response(completion.message.content)
     if parsed is None:
@@ -117,9 +118,12 @@ async def propose_contract(
     return draft_from_payload(parsed, bundle, max_criteria=max_criteria)
 
 
-def proposal_messages(bundle: BriefBundle, revision: str = "") -> List[ChatMessage]:
-    context = bundle.manifest(max_chars=12000)
-    parts = [context]
+def proposal_messages(
+    bundle: BriefBundle, revision: str = "", clarifications: str = ""
+) -> List[ChatMessage]:
+    parts = [bundle.manifest(max_chars=12000)]
+    if clarifications:
+        parts.append(f"{clarifications}\nTreat these answers as binding: they override your assumptions.")
     if revision:
         parts.append(f"HUMAN REVISION REQUEST (apply it):\n{revision}")
     parts.append("Produce the mission contract JSON.")

@@ -270,3 +270,30 @@ def test_brief_change_is_detected_on_resume(mission) -> None:
         entry for entry in read_ledger(mission.ledger_path) if entry["kind"] == "brief_loaded"
     ]
     assert records[-1]["changed_since_last_run"] is True
+
+
+def test_clarifications_are_binding_context(mission) -> None:
+    from deeploop.interview import Answer, Question, save_clarifications
+
+    artifacts = mission.root / ".deeploop" / "artifacts"
+    artifacts.mkdir(parents=True, exist_ok=True)
+    save_clarifications(
+        artifacts / "clarifications.json",
+        [
+            Answer(
+                question=Question(id="deps", question="May it add dependencies?", affects="permissions"),
+                answer="no new dependencies",
+            ),
+            Answer(question=Question(id="dir", question="Where?", affects="workspace"), answer=""),
+        ],
+        "mock-planner",
+    )
+
+    result, runtime = run_mission(mission, fix_turns())
+    assert result.status == MissionStatus.DONE
+    actor_calls = [call for call in runtime.provider.calls if call["role"] == "actor"]
+    joined = "\n".join(str(message.content) for message in actor_calls[0]["messages"])
+    assert "HUMAN CLARIFICATIONS" in joined
+    assert "no new dependencies" in joined
+    assert "assumes:" in joined
+    assert "clarifications_loaded" in ledger_kinds(mission.ledger_path)
